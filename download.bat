@@ -5,13 +5,11 @@ setlocal enabledelayedexpansion
 :SET_OUTPUT
 set /p OUTPUT_DIR=Please enter the default download folder (e.g., D:\Code\yd-dlp\output): 
 
-:: Check if input is empty
 if "!OUTPUT_DIR!"=="" (
     echo Folder cannot be empty. Please enter a valid path.
     goto SET_OUTPUT
 )
 
-:: Check if the folder exists
 if not exist "!OUTPUT_DIR!" (
     echo The path does not exist. Please enter a valid path.
     goto SET_OUTPUT
@@ -55,15 +53,19 @@ if "!URL!"=="" (
 if "%MODE%"=="1" (
     set OUTPUT_FILE="!OUTPUT_DIR!/mp3/%%(uploader)s/%%(title)s.%%(ext)s"
     set CMD=yt-dlp --no-playlist -x --audio-format mp3 --embed-thumbnail --embed-metadata --no-overwrites -o !OUTPUT_FILE! "%URL%"
+    set CLEAN_DIR=!OUTPUT_DIR!\mp3
 ) else if "%MODE%"=="2" (
     set OUTPUT_FILE="!OUTPUT_DIR!/mp4/%%(uploader)s/%%(title)s.%%(ext)s"
     set CMD=yt-dlp --no-playlist -f "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best" --embed-thumbnail --embed-metadata --no-overwrites -o !OUTPUT_FILE! "%URL%"
+    set CLEAN_DIR=!OUTPUT_DIR!\mp4
 ) else if "%MODE%"=="3" (
-    set OUTPUT_FILE="!OUTPUT_DIR!/mp3/%%(uploader)s/%%(playlist)s/%%(title)s.%%(ext)s"
+    set OUTPUT_FILE="!OUTPUT_DIR!/mp3/%%(playlist_uploader)s/%%(playlist_title)s/%%(title)s.%%(ext)s"
     set CMD=yt-dlp -x --audio-format mp3 --embed-thumbnail --embed-metadata --no-overwrites -o !OUTPUT_FILE! "%URL%"
+    set CLEAN_DIR=!OUTPUT_DIR!\mp3
 ) else if "%MODE%"=="4" (
-    set OUTPUT_FILE="!OUTPUT_DIR!/mp4/%%(uploader)s/%%(playlist)s/%%(title)s.%%(ext)s"
+    set OUTPUT_FILE="!OUTPUT_DIR!/mp4/%%(playlist_uploader)s/%%(playlist_title)s/%%(title)s.%%(ext)s"
     set CMD=yt-dlp -f "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best" --embed-thumbnail --embed-metadata --no-overwrites -o !OUTPUT_FILE! "%URL%"
+    set CLEAN_DIR=!OUTPUT_DIR!\mp4
 ) else (
     echo Invalid choice! Returning to main menu.
     goto LOOP
@@ -74,6 +76,14 @@ echo.
 echo Starting download...
 %CMD%
 echo Download completed!
+
+:: ===== 6. Clean up leftover .webm files =====
+echo Cleaning up leftover .webm files...
+for /r "!CLEAN_DIR!" %%F in (*.webm) do (
+    echo Deleting: %%F
+    del /q "%%F"
+)
+echo Cleanup complete.
 echo.
 
 goto LOOP
