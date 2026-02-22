@@ -1,6 +1,6 @@
-# Ignore ffmpeg folder
+# Ignore ffmpeg venv folder
 ffmpeg/
-
+venv/
 # Ignore yt-dlp executable
 yt-dlp.exe
 
