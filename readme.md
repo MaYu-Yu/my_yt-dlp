@@ -1,80 +1,149 @@
-# YouTube Downloader (MP3 & MP4)
+# YouTube Downloader (GUI)
 
-這個專案提供一個簡單的批次檔工具，使用 `yt-dlp` 下載 YouTube 的影片或音樂，並依作者與播放清單自動整理資料夾。
-
----
-
-## 1. 安裝與設定
-
-1. 先執行 `setup.bat` 安裝必要檔案，例如 `yt-dlp.exe`。  
-2. 完成後，就可以使用 `download.bat` 來下載 YouTube 影片或音樂。
+一款使用 Python + `yt-dlp` + `ffmpeg` 製作的圖形化 YouTube 下載工具，支援下載影片、MP3 音樂，以及播放清單批次下載，並具備進度條與日誌顯示。
 
 ---
 
-## 2. 使用 `download.bat` 教學
+## ✨ 功能特色
 
-1. 執行 `download.bat`。  
-2. 系統會詢問 **下載資料夾**，請輸入完整路徑（例如 `D:\Code\yd-dlp\output`）。  
-   - 如果輸入空值或無效路徑，系統會要求重新輸入。  
-3. 選擇下載模式：
-    1. Single Video MP3
-
-    2. Single Video MP4
-
-    3. Playlist MP3
-
-    4. Playlist MP4
-    - 在任意輸入提示輸入 `exit` 可以回到選單。  
-4. 輸入 YouTube 的影片或播放清單 URL（同樣可以輸入 `exit` 返回選單）。  
-5. 下載開始，程式會自動：
-- 單一影片 → 建立作者資料夾，檔案存於作者資料夾內  
-  ```
-  <下載資料夾>/mp3/作者名稱/影片名稱.mp3
-  <下載資料夾>/mp4/作者名稱/影片名稱.mp4
-  ```
-- 播放清單 → 建立作者資料夾，再在裡面建立播放清單名稱資料夾，存放影片  
-  ```
-  <下載資料夾>/mp3/作者名稱/播放清單名稱/編號 - 影片名稱.mp3
-  <下載資料夾>/mp4/作者名稱/播放清單名稱/編號 - 影片名稱.mp4
-  ```
-6. 下載完成後自動回到模式選單，可繼續下載其他影片或播放清單。
+* 🎬 下載單一影片 (MP4)
+* 🎵 下載單一影片音訊 (MP3)
+* 📃 批次下載播放清單 (MP4 / MP3)
+* 📊 即時下載進度顯示
+* 🧾 即時日誌輸出
+* 🧹 一鍵停止並清理暫存檔
+* 🖥️ 直覺式 GUI 介面（CustomTkinter）
+* ⚙️ 自動初始化下載 `yt-dlp.exe`
 
 ---
 
-## 3. 程式介紹
+## 🧰 使用技術
 
-這個專案主要使用 **批次檔 (.bat)** 搭配 `yt-dlp` 完成 YouTube 下載功能。  
-功能特色：
+* Python 3
+* yt-dlp
+* FFmpeg
+* CustomTkinter
+* psutil
+* threading + subprocess
 
-- 支援單一影片或整個播放清單下載。  
-- 可選 MP3（音樂）或 MP4（影片）格式。  
-- 自動依作者與播放清單整理資料夾。  
-- 嵌入影片封面與 metadata。  
-- 自動跳過已存在的檔案。  
-- 完全循環操作，隨時可輸入 `exit` 回到選單。  
-- 批次檔中會檢查下載資料夾是否存在，避免輸入無效路徑。
+---
+## 可以直接執行YT_Downloader.exe檔案 或者 按照以下步驟使用python來使用
 
-程式主要流程：
+## 📦 安裝需求
 
-1. 設定下載資料夾與檢查有效性。  
-2. 選擇下載模式（MP3 / MP4，單一影片 / 播放清單）。  
-3. 輸入 YouTube URL。  
-4. 依選擇模式設定 `yt-dlp` 的下載指令與輸出路徑。  
-5. 執行下載並回到主選單。
+### 1️⃣ 安裝 FFmpeg
+
+請先安裝 FFmpeg 並放在資料夾內：
+
+* Windows: https://ffmpeg.org/download.html
+
+
+### 2️⃣ 安裝 Python 套件
+
+```bash
+pip install -r requirements.txt
+```
+
+## 🚀 執行程式
+
+```bash
+python app.py
+```
+
+首次啟動時，程式會自動下載 `yt-dlp.exe`（Windows）。
 
 ---
 
-## 4. 參考
+## 📂 輸出檔案結構
 
-本專案的下載核心與批次檔指令參考自：
+### 單一影片下載
 
-- [yt-dlp 官方 GitHub](https://github.com/yt-dlp/yt-dlp)
-- [yt-dlp 官方 FFmpeg GitHub](https://github.com/yt-dlp/FFmpeg-Builds/releases)
-- [yt-dlp 官方執行檔 GitHub](https://github.com/yt-dlp/yt-dlp/releases/latest/download/)
+```
+輸出資料夾/
+└── 上傳者名稱/
+    └── 影片標題.mp4
+```
+
+### 播放清單下載
+
+```
+輸出資料夾/
+└── 上傳者名稱/
+    └── 播放清單名稱/
+        ├── 影片1.mp4
+        ├── 影片2.mp4
+        └── ...
+```
 
 ---
 
-## 5. 注意事項
+## 🎛️ 模式說明
 
-- 下載 YouTube 影片請遵守當地法律與 YouTube 使用條款。  
-- 確保已安裝 ffmpeg（可選，但建議安裝以支援轉檔與嵌入封面）。
+| 模式         | 功能         |
+| ---------- | ---------- |
+| 下載 MP3     | 下載單一影片音訊   |
+| 下載影片 MP4   | 下載單一影片     |
+| 下載播放清單 MP3 | 批次下載播放清單音訊 |
+| 下載播放清單 MP4 | 批次下載播放清單影片 |
+
+---
+
+## 🛑 停止下載
+
+按下「停止並清理」會：
+
+* 強制終止 yt-dlp 與 ffmpeg 子程序
+* 刪除 `.part` / `.temp` 等暫存檔案
+
+---
+
+## 🧠 運作流程
+
+1. 啟動程式
+2. 自動檢查並下載 `yt-dlp.exe`
+3. 選擇輸出資料夾
+4. 貼上 YouTube 影片或播放清單網址
+5. 選擇下載模式
+6. 開始下載並顯示進度與日誌
+
+---
+
+## ⚠️ 注意事項
+
+* 請確保已安裝 `ffmpeg`
+* 某些影片可能因版權限制無法下載
+* 播放清單下載速度取決於影片數量與網路狀況
+
+---
+
+## 🧩 打包為 EXE（Windows）
+
+建議使用 PyInstaller：
+
+```bash
+pyinstaller --noconfirm --onefile --windowed --icon="ico/i.ico" --add-data "ico;ico/" --add-data "venv/Lib/site-packages/customtkinter;customtkinter/" --name "YT_Downloader" "app.py"
+```
+
+輸出檔案位於：
+
+```
+dist/app.exe
+```
+
+---
+
+## 📜 License
+
+MIT License
+
+---
+
+## 🙌 貢獻
+
+歡迎提出 Issue 或 Pull Request 改進此工具！
+
+---
+
+## ⭐ Support
+
+如果這個專案對你有幫助，歡迎給個 Star ⭐
