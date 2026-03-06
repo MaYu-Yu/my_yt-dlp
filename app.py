@@ -9,6 +9,7 @@ import re
 import psutil
 import glob
 from collections import deque
+import shutil
 
 ctk.set_appearance_mode("Dark")
 ctk.set_default_color_theme("blue")
@@ -23,9 +24,6 @@ class Downloader_tk(ctk.CTk):
         self.geometry("900x820")
         self.configure(fg_color="#0D0D0D")
         
-        # 1. 初始隱藏視窗，避免環境未就緒時被操作
-        self.withdraw() 
-
         self.output_dir = ctk.StringVar()
         self.url = ctk.StringVar()
         self.mode = ctk.StringVar(value="1")
@@ -41,80 +39,104 @@ class Downloader_tk(ctk.CTk):
         self.actual_processed_count = 0 
 
         self.setup_ui()
-        # 2. 啟動環境檢查
         self.auto_setup_env()
         self.protocol("WM_DELETE_WINDOW", self.on_closing)
 
-    def auto_setup_env(self):
-        """檢查 yt-dlp.exe 是否存在，若無則下載，完成後顯示主介面"""
-        def download_task():
-            if not os.path.exists("yt-dlp.exe"):
-                # 這裡可以考慮輸出到終端機提示正在初始化
-                print("正在初始化環境 (下載 yt-dlp.exe)...")
-                try:
-                    urllib.request.urlretrieve(
-                        "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp.exe", 
-                        "yt-dlp.exe"
-                    )
-                    print("環境初始化完成。")
-                except Exception as e:
-                    print(f"環境初始化失敗: {e}")
-                    self.destroy() # 若下載失敗則關閉程式
-                    return
-            
-            # 3. 使用 after 回到主線程顯示視窗，避免執行緒安全問題
-            self.after(0, self.show_main_window)
-        threading.Thread(target=download_task, daemon=True).start()
+    def write_log(self, msg):
+        """日誌顯示"""
+        # 確保 msg 是字串且處理可能的編碼殘留
+        if isinstance(msg, bytes):
+            msg = msg.decode('utf-8', errors='replace')
         
-    def show_main_window(self):
-        """顯示主視窗並將其移至最前端"""
-        self.deiconify()
-        self.attributes("-topmost", True)  # 短暫置頂確保使用者看見
-        self.attributes("-topmost", False) # 隨即取消置頂，恢復正常操作
-        self.write_log("環境檢查通過，程式就緒。")
+        self.txt_log.insert("end", f"[{datetime.now().strftime('%H:%M:%S')}] {msg}\n")
+        self.txt_log.see("end")
+
+    def toggle_ui_state(self, state):
+        self.btn_run.configure(state=state)
+        self.btn_stop.configure(state=state)
+        self.ent_u.configure(state=state)
+        for child in self.f_m.winfo_children():
+            if isinstance(child, ctk.CTkRadioButton):
+                child.configure(state=state)
+        if state == "disabled":
+            self.ent_p.configure(state="disabled")
+        else:
+            self.ent_p.configure(state="readonly")
+
+    def auto_setup_env(self):
+        self.toggle_ui_state("disabled")
+        self.lbl_status.configure(text="環境建置中...", text_color="#C0392B")
+        self.write_log(">>> [環境] 開始初始化建置程序...")
+
+        def download_task():
+            base_path = os.path.dirname(os.path.abspath(__file__))
+            ytdlp_path = os.path.join(base_path, "yt-dlp.exe")
+            ffmpeg_zip = os.path.join(base_path, "ffmpeg-master-latest-win64-gpl.zip")
+            ffmpeg_dir = os.path.join(base_path, "ffmpeg")
+
+            try:
+                if not os.path.exists(ytdlp_path):
+                    self.write_log(">>> [環境] 正在下載 yt-dlp.exe...")
+                    urllib.request.urlretrieve("https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp.exe", ytdlp_path)
+                
+                if not os.path.exists(ffmpeg_dir):
+                    self.write_log(">>> [環境] 正在下載 ffmpeg...")
+                    if not os.path.exists(ffmpeg_zip):
+                        ffmpeg_url = "https://github.com/yt-dlp/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl.zip"
+                        urllib.request.urlretrieve(ffmpeg_url, ffmpeg_zip)
+                    
+                    self.write_log(">>> [環境] 正在執行解壓縮...")
+                    subprocess.run(["tar", "-xf", ffmpeg_zip], cwd=base_path, shell=True, creationflags=0x08000000)
+                    
+                    extracted_folder = os.path.join(base_path, "ffmpeg-master-latest-win64-gpl")
+                    if os.path.exists(extracted_folder):
+                        if os.path.exists(ffmpeg_dir): shutil.rmtree(ffmpeg_dir)
+                        os.rename(extracted_folder, ffmpeg_dir)
+                    if os.path.exists(ffmpeg_zip): os.remove(ffmpeg_zip)
+                
+                self.write_log(">>> [系統] 環境建置完成。")
+                self.after(0, lambda: self.lbl_status.configure(text="準備完成", text_color="#F1C40F"))
+                self.after(0, lambda: self.toggle_ui_state("normal"))
+            except Exception as e:
+                self.write_log(f">>> [錯誤] 初始化失敗: {e}")
+
+        threading.Thread(target=download_task, daemon=True).start()
 
     def setup_ui(self):
         ctk.CTkLabel(self, text="YOUTUBE DOWNLOADER", font=ctk.CTkFont(size=38, weight="bold"), text_color="#3498DB").pack(pady=(30, 10))
-        
         self.f_main = ctk.CTkFrame(self, fg_color="#161616", corner_radius=15)
         self.f_main.pack(fill="both", padx=40, pady=10, expand=True)
-
-        ctk.CTkLabel(self.f_main, text="--- 請點擊下方輸入框以選擇儲存根目錄 ---", font=ctk.CTkFont(size=13), text_color="#7F8C8D").pack(pady=(15, 0))
-        self.ent_p = ctk.CTkEntry(self.f_main, textvariable=self.output_dir, font=ctk.CTkFont(size=16), height=45, placeholder_text="尚未選擇路徑...", justify="center")
+        ctk.CTkLabel(self.f_main, text="--- 儲存目錄 ---", font=ctk.CTkFont(size=13), text_color="#7F8C8D").pack(pady=(15, 0))
+        self.ent_p = ctk.CTkEntry(self.f_main, textvariable=self.output_dir, font=ctk.CTkFont(size=16), height=45, justify="center")
         self.ent_p.pack(fill="x", padx=20, pady=(5, 15))
         self.ent_p.bind("<Button-1>", lambda e: self.browse_folder())
         self.ent_p.configure(state="readonly") 
-
         self.f_m = ctk.CTkFrame(self.f_main, fg_color="transparent")
         self.f_m.pack(fill="x", pady=10)
-        modes = [("下載音樂 MP3", "1"), ("下載影片 MP4", "2"), ("下載播放清單 MP3", "3"), ("下載播放清單 MP4", "4")]
+        modes = [("音樂 MP3", "1"), ("影片 MP4", "2"), ("播放清單 MP3", "3"), ("播放清單 MP4", "4")]
         for t, v in modes:
             ctk.CTkRadioButton(self.f_m, text=t, variable=self.mode, value=v).pack(side="left", padx=25)
-
-        ctk.CTkLabel(self.f_main, text="--- 請在下方欄位貼上 YouTube 影片或播放清單網址 ---", font=ctk.CTkFont(size=13), text_color="#7F8C8D").pack(pady=(15, 0))
-        self.ent_u = ctk.CTkEntry(self.f_main, textvariable=self.url, placeholder_text="在此貼上網址 (例如: https://www.youtube.com/watch?v=...)", height=60, font=ctk.CTkFont(size=18), border_color="#3498DB", border_width=2, justify="center")
+        self.ent_u = ctk.CTkEntry(self.f_main, textvariable=self.url, placeholder_text="在此貼上 YouTube 網址...", height=60, font=ctk.CTkFont(size=18), border_color="#3498DB", border_width=2, justify="center")
         self.ent_u.pack(fill="x", padx=20, pady=(5, 15))
-
-        self.lbl_status = ctk.CTkLabel(self.f_main, text="準備完成", font=ctk.CTkFont(size=52, weight="bold"), text_color="#F1C40F")
+        self.lbl_status = ctk.CTkLabel(self.f_main, text="初始化中", font=ctk.CTkFont(size=52, weight="bold"), text_color="#F1C40F")
         self.lbl_status.pack(pady=(20, 5))
-        
         self.bar = ctk.CTkProgressBar(self.f_main, height=30, progress_color="#3498DB", fg_color="#2C3E50")
         self.bar.set(0)
         self.bar.pack(fill="x", padx=25, pady=20)
-
         self.f_btn = ctk.CTkFrame(self, fg_color="transparent")
         self.f_btn.pack(pady=20)
         self.btn_run = ctk.CTkButton(self.f_btn, text="開始執行", width=220, height=60, font=ctk.CTkFont(size=22, weight="bold"), command=self.start_task)
         self.btn_run.pack(side="left", padx=15)
         self.btn_stop = ctk.CTkButton(self.f_btn, text="停止並清理", fg_color="#C0392B", width=220, height=60, font=ctk.CTkFont(size=22, weight="bold"), command=self.stop_t)
         self.btn_stop.pack(side="left", padx=15)
-
-        self.txt_log = ctk.CTkTextbox(self, height=130, font=ctk.CTkFont(family="Consolas", size=14), fg_color="#000000", text_color="#2ECC71")
+        # 字體設為微軟正黑體以利顯示中文
+        self.txt_log = ctk.CTkTextbox(self, height=130, font=ctk.CTkFont(family="Microsoft JhengHei UI", size=14), fg_color="#000000", text_color="#2ECC71")
         self.txt_log.pack(fill="both", padx=40, pady=(0, 20))
 
-    def write_log(self, msg):
-        self.txt_log.insert("end", f"[{datetime.now().strftime('%H:%M:%S')}] {msg}\n")
-        self.txt_log.see("end")
+    def browse_folder(self):
+        if self.btn_run.cget("state") == "disabled": return 
+        f = filedialog.askdirectory()
+        if f: self.output_dir.set(f)
 
     def clean_temp_files(self):
         root_path = self.output_dir.get()
@@ -126,14 +148,6 @@ class Downloader_tk(ctk.CTk):
                     try: os.remove(f)
                     except: pass
 
-    def on_closing(self):
-        if self.downloading: self.stop_t()
-        self.destroy()
-
-    def browse_folder(self):
-        f = filedialog.askdirectory()
-        if f: self.output_dir.set(f)
-
     def stop_t(self):
         if self.download_proc:
             try:
@@ -143,57 +157,65 @@ class Downloader_tk(ctk.CTk):
             except: pass
         self.downloading = False
         self.clean_temp_files()
-        self.lbl_status.configure(text="停止", text_color="#C0392B")
-        self.write_log("任務已停止。")
+        self.lbl_status.configure(text="已停止", text_color="#C0392B")
+        self.write_log(">>> [系統] 任務已手動中止。")
+        self.btn_run.configure(state="normal")
+
+    def on_closing(self):
+        if self.downloading: self.stop_t()
+        self.destroy()
 
     def start_task(self):
         url, path = self.url.get().strip(), self.output_dir.get().strip()
-        
-        if not path and not url:
-            self.lbl_status.configure(text="請填寫資訊", text_color="#E74C3C")
-            self.write_log("錯誤：請選擇儲存路徑並填入 YouTube 網址。")
+        if not path or not url:
+            self.lbl_status.configure(text="資訊不全", text_color="#E74C3C")
             return
-        if not path:
-            self.lbl_status.configure(text="請選擇路徑", text_color="#E74C3C")
-            self.write_log("錯誤：尚未選擇儲存根目錄。")
-            return
-        if not url:
-            self.lbl_status.configure(text="請輸入網址", text_color="#E74C3C")
-            self.write_log("錯誤：尚未輸入 YouTube 網址。")
-            return
-
         self.downloading = True
-        self.total_count = 0
-        self.current_idx = 0
-        self.last_logged_idx = 0
-        self.is_finished_logged = False
-        self.has_error = False
-        self.actual_processed_count = 0 
-        
+        self.total_count = self.current_idx = self.last_logged_idx = self.actual_processed_count = 0 
+        self.is_finished_logged = self.has_error = False
         self.btn_run.configure(state="disabled")
         self.bar.set(0)
         self.lbl_status.configure(text="分析中...", text_color="#F1C40F")
         self.txt_log.delete("1.0", "end")
-        
-        self.write_log(f"任務啟動 | 儲存路徑: {path}")
+        self.write_log(f">>> [系統] 任務啟動 | 儲存至: {path}")
         threading.Thread(target=self.run_process, args=(url, path.replace("\\", "/")), daemon=True).start()
         self.poll_output()
 
     def run_process(self, url, path):
         mode = self.mode.get()
         is_pl = mode in ["3", "4"]
-        cmd = ["yt-dlp", "--newline", "--ignore-errors", "--no-overwrites"]
-        if is_pl:
-            tpl = f"{path}/%(uploader)s/%(playlist_title)s/%(title)s.%(ext)s"
+        base_path = os.path.dirname(os.path.abspath(__file__))
+        ffmpeg_bin_path = os.path.join(base_path, "ffmpeg", "bin")
+        
+        # 1. 強制設定環境變數為 UTF-8
+        env = os.environ.copy()
+        env["PYTHONIOENCODING"] = "utf-8"
+
+        # 2. 加入 --encoding utf-8 到指令中
+        cmd = ["yt-dlp", "--newline", "--encoding", "utf-8", "--ignore-errors", "--no-overwrites", "--ffmpeg-location", ffmpeg_bin_path]
+        
+        if is_pl: tpl = f"{path}/%(uploader)s/%(playlist_title)s/%(title)s.%(ext)s"
         else:
             cmd.append("--no-playlist")
             tpl = f"{path}/%(uploader)s/%(title)s.%(ext)s"
         cmd.extend(["-o", tpl])
+        
         if mode in ["1", "3"]: cmd += ["-x", "--audio-format", "mp3"]
         else: cmd += ["-f", "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best"]
         cmd.append(url)
 
-        self.download_proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, encoding='utf-8', errors='replace', creationflags=0x08000000)
+        # 3. 讀取流設定
+        self.download_proc = subprocess.Popen(
+            cmd, 
+            stdout=subprocess.PIPE, 
+            stderr=subprocess.STDOUT, 
+            text=True, 
+            encoding='utf-8', 
+            errors='replace', 
+            env=env,
+            creationflags=0x08000000
+        )
+        
         for line in iter(self.download_proc.stdout.readline, ''):
             if not self.downloading: break
             self.msg_queue.append(line.strip())
@@ -204,35 +226,33 @@ class Downloader_tk(ctk.CTk):
         while self.msg_queue:
             line = self.msg_queue.popleft()
             if "END_SIGNAL" in line:
-                # 關鍵判定：如果錯誤發生，或者是根本沒處理到任何影片
                 if self.has_error or self.actual_processed_count == 0:
                     self.lbl_status.configure(text="下載失敗", text_color="#E74C3C")
-                    if self.actual_processed_count == 0:
-                        self.write_log("--- 任務結束：未偵測到任何有效影片內容 ---")
-                    else:
-                        self.write_log("--- 任務結束：過程中發生錯誤 ---")
                 else:
                     self.bar.set(1)
                     self.lbl_status.configure(text="下載完成", text_color="#2ECC71")
-                    self.write_log("--- 下載任務結束 ---")
-                
+                    self.write_log(f">>> [完成] 任務成功處理 {self.actual_processed_count} 個項目。")
                 self.btn_run.configure(state="normal")
                 self.downloading = False
                 return
 
+            # 解析邏輯
             if "ERROR:" in line:
                 self.has_error = True
-                self.write_log(f"錯誤: {line.split('ERROR: ')[-1]}")
+                self.write_log(f">>> [錯誤] {line.split('ERROR: ')[-1]}")
 
             if "[download] Destination:" in line:
                 fname = os.path.basename(line.split("Destination: ")[-1])
-                self.write_log(f"開始下載: {fname}")
-                self.actual_processed_count += 1 # 偵測到目的地，計數增加
+                self.write_log(f">>> [下載] 開始: {fname}")
+                self.actual_processed_count += 1
             
             if "has already been downloaded" in line:
-                fname = line.split("] ")[-1].split(" has")[0]
-                self.write_log(f"(已存在)跳過: {fname}")
-                self.actual_processed_count += 1 # 已存在也算是有處理到
+                fname = os.path.basename(line.split("] ")[-1].split(" has")[0])
+                self.write_log(f">>> [跳過] 檔案已存在: {fname}")
+                self.actual_processed_count += 1
+
+            if "[ExtractAudio]" in line: self.write_log(">>> [處理] 轉碼 MP3 中...")
+            if "[Merger]" in line: self.write_log(">>> [處理] 合併影音中...")
 
             is_done_signal = "[ExtractAudio]" in line or "[Merger]" in line or "already been downloaded" in line or "100%" in line
 
@@ -240,12 +260,10 @@ class Downloader_tk(ctk.CTk):
                 pl_match = re.search(r"item (\d+) of (\d+)", line, re.IGNORECASE)
                 if pl_match:
                     self.current_idx, self.total_count = int(pl_match.group(1)), int(pl_match.group(2))
-                    display_done = self.current_idx - 1
-                    if is_done_signal:
-                        display_done = self.current_idx
-                        if display_done > self.last_logged_idx:
-                            self.write_log(f"完成項目: {display_done} / {self.total_count}")
-                            self.last_logged_idx = display_done
+                    display_done = self.current_idx - (0 if is_done_signal else 1)
+                    if display_done > self.last_logged_idx:
+                        self.write_log(f">>> [進度] 播放清單項目: {display_done} / {self.total_count}")
+                        self.last_logged_idx = display_done
                     self.lbl_status.configure(text=f"{display_done} / {self.total_count}")
                     self.bar.set(display_done / self.total_count if self.total_count > 0 else 0)
             else:
@@ -254,13 +272,6 @@ class Downloader_tk(ctk.CTk):
                     p = float(pct_match.group(1))
                     self.lbl_status.configure(text=f"{int(p)}%")
                     self.bar.set(p / 100)
-                
-                if not self.is_finished_logged and ("[ExtractAudio]" in line or "[Merger]" in line):
-                    self.write_log("單一影片下載與處理完成。")
-                    self.is_finished_logged = True
-                elif not self.is_finished_logged and "already been downloaded" in line:
-                    self.write_log("單一影片已存在，跳過處理。")
-                    self.is_finished_logged = True
 
         if self.downloading:
             self.after(50, self.poll_output)
