@@ -1,4 +1,4 @@
-import os
+import os, sys
 import subprocess
 import threading
 import customtkinter as ctk
@@ -17,9 +17,12 @@ ctk.set_default_color_theme("blue")
 class Downloader_tk(ctk.CTk):
     def __init__(self):
         super().__init__()
-        icon_path = os.path.join(os.path.dirname(__file__), "ico", "i.ico")
+        # 修正 1：透過類別內的 get_base_path 獲取路徑以設定圖標
+        base_path = self.get_base_path()
+        icon_path = os.path.join(base_path, "ico", "i.ico")
         if os.path.exists(icon_path):
             self.iconbitmap(icon_path)
+            
         self.title("YouTube Downloader")
         self.geometry("900x820")
         self.configure(fg_color="#0D0D0D")
@@ -42,9 +45,18 @@ class Downloader_tk(ctk.CTk):
         self.auto_setup_env()
         self.protocol("WM_DELETE_WINDOW", self.on_closing)
 
+    @staticmethod
+    def get_base_path():
+        """獲取程式執行的實際目錄 (解決 PyInstaller onefile 路徑問題)"""
+        if getattr(sys, 'frozen', False):
+            # 如果是打包後的 exe，傳回 exe 所在的資料夾
+            return os.path.dirname(sys.executable)
+        else:
+            # 如果是開發環境的 .py
+            return os.path.dirname(os.path.abspath(__file__))
+
     def write_log(self, msg):
         """日誌顯示"""
-        # 確保 msg 是字串且處理可能的編碼殘留
         if isinstance(msg, bytes):
             msg = msg.decode('utf-8', errors='replace')
         
@@ -62,14 +74,15 @@ class Downloader_tk(ctk.CTk):
             self.ent_p.configure(state="disabled")
         else:
             self.ent_p.configure(state="readonly")
-
+            
     def auto_setup_env(self):
         self.toggle_ui_state("disabled")
         self.lbl_status.configure(text="環境建置中...", text_color="#C0392B")
         self.write_log(">>> [環境] 開始初始化建置程序...")
 
         def download_task():
-            base_path = os.path.dirname(os.path.abspath(__file__))
+            # 修正 2：使用 self.get_base_path()
+            base_path = self.get_base_path()
             ytdlp_path = os.path.join(base_path, "yt-dlp.exe")
             ffmpeg_zip = os.path.join(base_path, "ffmpeg-master-latest-win64-gpl.zip")
             ffmpeg_dir = os.path.join(base_path, "ffmpeg")
@@ -129,7 +142,6 @@ class Downloader_tk(ctk.CTk):
         self.btn_run.pack(side="left", padx=15)
         self.btn_stop = ctk.CTkButton(self.f_btn, text="停止並清理", fg_color="#C0392B", width=220, height=60, font=ctk.CTkFont(size=22, weight="bold"), command=self.stop_t)
         self.btn_stop.pack(side="left", padx=15)
-        # 字體設為微軟正黑體以利顯示中文
         self.txt_log = ctk.CTkTextbox(self, height=130, font=ctk.CTkFont(family="Microsoft JhengHei UI", size=14), fg_color="#000000", text_color="#2ECC71")
         self.txt_log.pack(fill="both", padx=40, pady=(0, 20))
 
@@ -184,15 +196,16 @@ class Downloader_tk(ctk.CTk):
     def run_process(self, url, path):
         mode = self.mode.get()
         is_pl = mode in ["3", "4"]
-        base_path = os.path.dirname(os.path.abspath(__file__))
-        ffmpeg_bin_path = os.path.join(base_path, "ffmpeg", "bin")
         
-        # 1. 強制設定環境變數為 UTF-8
+        # 修正 3：使用 self.get_base_path() 定位 EXE 旁邊的組件
+        base_path = self.get_base_path()
+        ffmpeg_bin_path = os.path.join(base_path, "ffmpeg", "bin")
+        ytdlp_exe_path = os.path.join(base_path, "yt-dlp.exe")
+        
         env = os.environ.copy()
         env["PYTHONIOENCODING"] = "utf-8"
 
-        # 2. 加入 --encoding utf-8 到指令中
-        cmd = ["yt-dlp", "--newline", "--encoding", "utf-8", "--ignore-errors", "--no-overwrites", "--ffmpeg-location", ffmpeg_bin_path]
+        cmd = [ytdlp_exe_path, "--newline", "--encoding", "utf-8", "--ignore-errors", "--no-overwrites", "--ffmpeg-location", ffmpeg_bin_path]
         
         if is_pl: tpl = f"{path}/%(uploader)s/%(playlist_title)s/%(title)s.%(ext)s"
         else:
@@ -204,7 +217,6 @@ class Downloader_tk(ctk.CTk):
         else: cmd += ["-f", "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best"]
         cmd.append(url)
 
-        # 3. 讀取流設定
         self.download_proc = subprocess.Popen(
             cmd, 
             stdout=subprocess.PIPE, 
@@ -231,12 +243,11 @@ class Downloader_tk(ctk.CTk):
                 else:
                     self.bar.set(1)
                     self.lbl_status.configure(text="下載完成", text_color="#2ECC71")
-                    self.write_log(f">>> [完成] 任務成功處理 {self.actual_processed_count} 個項目。")
+                    self.write_log(f">>> [完成] 任務成功處理。")
                 self.btn_run.configure(state="normal")
                 self.downloading = False
                 return
 
-            # 解析邏輯
             if "ERROR:" in line:
                 self.has_error = True
                 self.write_log(f">>> [錯誤] {line.split('ERROR: ')[-1]}")
