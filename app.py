@@ -87,7 +87,7 @@ class Downloader_tk(ctk.CTk):
 
         self.f_m = ctk.CTkFrame(self.f_main, fg_color="transparent")
         self.f_m.pack(fill="x", pady=10)
-        modes = [("下載 MP3", "1"), ("下載影片 MP4", "2"), ("下載播放清單 MP3", "3"), ("下載播放清單 MP4", "4")]
+        modes = [("下載音樂 MP3", "1"), ("下載影片 MP4", "2"), ("下載播放清單 MP3", "3"), ("下載播放清單 MP4", "4")]
         for t, v in modes:
             ctk.CTkRadioButton(self.f_m, text=t, variable=self.mode, value=v).pack(side="left", padx=25)
 
