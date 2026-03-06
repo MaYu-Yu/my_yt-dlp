@@ -31,20 +31,13 @@
 
 ## 📦 安裝需求
 
-### 1️⃣ 安裝 FFmpeg
-
-請先安裝 FFmpeg 並放在資料夾內：
-
-* Windows: https://ffmpeg.org/download.html
-
-
-### 2️⃣ 安裝 Python 套件
+### 1️⃣ 安裝 Python 套件
 
 ```bash
 pip install -r requirements.txt
 ```
 
-## 🚀 執行程式
+## 2️⃣ 執行程式
 
 ```bash
 python app.py
