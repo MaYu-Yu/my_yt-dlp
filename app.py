@@ -33,7 +33,7 @@ class Downloader_tk(ctk.CTk):
         self.downloading = False
         self.msg_queue = deque()
         
-        self.total_count = 0
+        self.total_count = 0 
         self.current_idx = 0
         self.last_logged_idx = 0
         self.is_finished_logged = False
