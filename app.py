@@ -17,7 +17,6 @@ ctk.set_default_color_theme("blue")
 class Downloader_tk(ctk.CTk):
     def __init__(self):
         super().__init__()
-        # 修正 1：透過類別內的 get_base_path 獲取路徑以設定圖標
         base_path = self.get_base_path()
         icon_path = os.path.join(base_path, "ico", "i.ico")
         if os.path.exists(icon_path):
@@ -47,19 +46,14 @@ class Downloader_tk(ctk.CTk):
 
     @staticmethod
     def get_base_path():
-        """獲取程式執行的實際目錄 (解決 PyInstaller onefile 路徑問題)"""
         if getattr(sys, 'frozen', False):
-            # 如果是打包後的 exe，傳回 exe 所在的資料夾
             return os.path.dirname(sys.executable)
         else:
-            # 如果是開發環境的 .py
             return os.path.dirname(os.path.abspath(__file__))
 
     def write_log(self, msg):
-        """日誌顯示"""
         if isinstance(msg, bytes):
             msg = msg.decode('utf-8', errors='replace')
-        
         self.txt_log.insert("end", f"[{datetime.now().strftime('%H:%M:%S')}] {msg}\n")
         self.txt_log.see("end")
 
@@ -81,7 +75,6 @@ class Downloader_tk(ctk.CTk):
         self.write_log(">>> [環境] 開始初始化建置程序...")
 
         def download_task():
-            # 修正 2：使用 self.get_base_path()
             base_path = self.get_base_path()
             ytdlp_path = os.path.join(base_path, "yt-dlp.exe")
             ffmpeg_zip = os.path.join(base_path, "ffmpeg-master-latest-win64-gpl.zip")
@@ -195,9 +188,8 @@ class Downloader_tk(ctk.CTk):
 
     def run_process(self, url, path):
         mode = self.mode.get()
-        is_pl = mode in ["3", "4"]
+        tpl = f"{path}/%(title)s.%(ext)s"
         
-        # 修正 3：使用 self.get_base_path() 定位 EXE 旁邊的組件
         base_path = self.get_base_path()
         ffmpeg_bin_path = os.path.join(base_path, "ffmpeg", "bin")
         ytdlp_exe_path = os.path.join(base_path, "yt-dlp.exe")
@@ -205,16 +197,30 @@ class Downloader_tk(ctk.CTk):
         env = os.environ.copy()
         env["PYTHONIOENCODING"] = "utf-8"
 
-        cmd = [ytdlp_exe_path, "--newline", "--encoding", "utf-8", "--ignore-errors", "--no-overwrites", "--ffmpeg-location", ffmpeg_bin_path]
+        # 基本指令
+        cmd = [
+            ytdlp_exe_path, 
+            "--newline", 
+            "--encoding", "utf-8", 
+            "--ignore-errors", 
+            "--no-overwrites", 
+            "--ffmpeg-location", ffmpeg_bin_path,
+            "--embed-thumbnail",    # 寫入縮圖
+            "--embed-metadata"     # 寫入元數據 (標題、歌手等資訊)
+        ]
         
-        if is_pl: tpl = f"{path}/%(uploader)s/%(playlist_title)s/%(title)s.%(ext)s"
-        else:
+        # 播放清單模式判定
+        if mode not in ["3", "4"]:
             cmd.append("--no-playlist")
-            tpl = f"{path}/%(uploader)s/%(title)s.%(ext)s"
+        
         cmd.extend(["-o", tpl])
         
-        if mode in ["1", "3"]: cmd += ["-x", "--audio-format", "mp3"]
-        else: cmd += ["-f", "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best"]
+        # 音訊或影片模式設定
+        if mode in ["1", "3"]: 
+            cmd += ["-x", "--audio-format", "mp3"]
+        else: 
+            cmd += ["-f", "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best"]
+            
         cmd.append(url)
 
         self.download_proc = subprocess.Popen(
@@ -257,9 +263,18 @@ class Downloader_tk(ctk.CTk):
                 self.write_log(f">>> [下載] 開始: {fname}")
                 self.actual_processed_count += 1
             
+            # 修正：加強跳過已存在檔案的偵測
             if "has already been downloaded" in line:
-                fname = os.path.basename(line.split("] ")[-1].split(" has")[0])
-                self.write_log(f">>> [跳過] 檔案已存在: {fname}")
+                try:
+                    # 擷取檔名：[download] <file_path> has already been downloaded
+                    fn_match = re.search(r"\[download\]\s+(.+?)\s+has already been downloaded", line)
+                    if fn_match:
+                        fname = os.path.basename(fn_match.group(1))
+                        self.write_log(f">>> [跳過] 檔案已存在: {fname}")
+                    else:
+                        self.write_log(">>> [跳過] 偵測到重複檔案。")
+                except:
+                    pass
                 self.actual_processed_count += 1
 
             if "[ExtractAudio]" in line: self.write_log(">>> [處理] 轉碼 MP3 中...")
