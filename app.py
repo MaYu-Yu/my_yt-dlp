@@ -1,18 +1,137 @@
-import os, sys
-import subprocess
+import os, sys, re
 import threading
 import customtkinter as ctk
 from tkinter import filedialog
-import urllib.request
 from datetime import datetime
-import re
-import psutil
+import yt_dlp
 import glob
-from collections import deque
-import shutil
+from downloader import YTDownloader
 
 ctk.set_appearance_mode("Dark")
 ctk.set_default_color_theme("blue")
+
+# 建立一個自訂日誌攔截器，用來將 yt-dlp 內部狀態輸出到 UI
+class YtLogger:
+    def __init__(self, write_log_func):
+        self.write_log = write_log_func
+        
+    def debug(self, msg):
+        if "has already been downloaded" in msg:
+            try:
+                # 擷取檔名：[download] <file_path> has already been downloaded
+                fname = os.path.basename(msg.split("has already been downloaded")[0].replace("[download]", "").strip())
+                self.write_log(f">>> [跳過] 檔案已存在: {fname}")
+            except:
+                self.write_log(">>> [跳過] 檔案已存在。")
+        elif "ExtractAudio" in msg:
+            self.write_log(">>> [處理] 轉碼 MP3 中...")
+        elif "Merger" in msg:
+            self.write_log(">>> [處理] 合併影音中...")
+            
+    def info(self, msg):
+        pass
+        
+    def warning(self, msg):
+        pass
+        
+    def error(self, msg):
+        self.write_log(f">>> [錯誤] {msg}")
+
+# 建立一個繼承 YTDownloader 的自訂類別，去除建立資料夾與歷史紀錄功能
+class NoHistoryDownloader(YTDownloader):
+    def __init__(self):
+        self.base_path = os.path.dirname(sys.executable) if getattr(sys, 'frozen', False) else os.path.dirname(os.path.abspath(__file__))
+        self.ffmpeg_dir = os.path.join(self.base_path, "ffmpeg")
+        self.ffmpeg_bin = os.path.join(self.ffmpeg_dir, "bin")
+        
+        self.is_stop_requested = False
+        self.current_status = ""
+        self.auto_setup_ffmpeg()
+        
+    def download(self, url, save_path, audio_only, is_playlist, custom_logger):
+        os.makedirs(save_path, exist_ok=True)
+        
+        # 預先解析該 URL/播放清單包含哪些影片標題，用來精準比對本地檔案
+        target_ext = "mp3" if audio_only else "mp4"
+        
+        # 使用 extract_flat 快速獲取清單資訊，而不下載檔案
+        extract_opts = {
+            'extract_flat': True,
+            'quiet': True,
+            'noplaylist': not is_playlist
+        }
+        
+        existing_titles = set()
+        # 讀取本地已存在的標題 (去除檔名中的非法字元以利比對)
+        for f in os.listdir(save_path):
+            if f.endswith(f".{target_ext}"):
+                title_without_ext = os.path.splitext(f)[0]
+                existing_titles.add(title_without_ext)
+
+        # 核心下載設定
+        opts = {
+            'ffmpeg_location': self.ffmpeg_bin,
+            'outtmpl': os.path.join(save_path, "%(title)s.%(ext)s"),
+            'progress_hooks': [self.progress_hook],
+            'logger': custom_logger,
+            'quiet': False,
+            'noprogress': False,
+            'extract_flat': False,
+            'ignoreerrors': True,
+            'overwrites': False,
+            'noplaylist': not is_playlist,
+            'writethumbnail': True,
+            'addmetadata': True,
+        }
+
+        # 加入跳過已存在檔案的過濾器 (Match Filter)
+        def match_filter(info_dict, incomplete):
+            title = info_dict.get('title')
+            # 清理檔名中可能被替換的特殊字元
+            safe_title = re.sub(r'[\\/:*?"<>|]', '_', title) if title else ""
+            
+            # 如果資料夾中已經有對應標題的 mp3/mp4，直接拒絕下載
+            if title in existing_titles or safe_title in existing_titles:
+                custom_logger.debug(f"[download] {title}.{target_ext} has already been downloaded")
+                return f"檔案 {title}.{target_ext} 已存在，跳過下載"
+            return None
+
+        opts['match_filter'] = match_filter
+
+        postprocessors = [
+            {'key': 'FFmpegMetadata', 'add_chapters': True},
+            {'key': 'EmbedThumbnail'},
+        ]
+
+        if audio_only:
+            opts.update({'format': 'bestaudio/best'})
+            postprocessors.insert(0, {
+                'key': 'FFmpegExtractAudio',
+                'preferredcodec': 'mp3',
+                'preferredquality': '192'
+            })
+        else:
+            opts.update({'format': 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best'})
+
+        opts['postprocessors'] = postprocessors
+
+        before_images = set(glob.glob(os.path.join(save_path, "*.jpg")) + 
+                            glob.glob(os.path.join(save_path, "*.webp")) + 
+                            glob.glob(os.path.join(save_path, "*.png")))
+
+        with yt_dlp.YoutubeDL(opts) as ydl:
+            ydl.download([url])
+            
+        # 清理多餘的播放清單圖片
+        after_images = set(glob.glob(os.path.join(save_path, "*.jpg")) + 
+                           glob.glob(os.path.join(save_path, "*.webp")) + 
+                           glob.glob(os.path.join(save_path, "*.png")))
+                           
+        for img in after_images - before_images:
+            try:
+                os.remove(img)
+            except:
+                pass
 
 class Downloader_tk(ctk.CTk):
     def __init__(self):
@@ -29,16 +148,9 @@ class Downloader_tk(ctk.CTk):
         self.output_dir = ctk.StringVar()
         self.url = ctk.StringVar()
         self.mode = ctk.StringVar(value="1")
-        self.download_proc = None
         self.downloading = False
-        self.msg_queue = deque()
         
-        self.total_count = 0 
-        self.current_idx = 0
-        self.last_logged_idx = 0
-        self.is_finished_logged = False
-        self.has_error = False
-        self.actual_processed_count = 0 
+        self.DL = None
 
         self.setup_ui()
         self.auto_setup_env()
@@ -52,8 +164,9 @@ class Downloader_tk(ctk.CTk):
             return os.path.dirname(os.path.abspath(__file__))
 
     def write_log(self, msg):
-        if isinstance(msg, bytes):
-            msg = msg.decode('utf-8', errors='replace')
+        self.after(0, lambda: self._write_log_internal(msg))
+        
+    def _write_log_internal(self, msg):
         self.txt_log.insert("end", f"[{datetime.now().strftime('%H:%M:%S')}] {msg}\n")
         self.txt_log.see("end")
 
@@ -72,41 +185,19 @@ class Downloader_tk(ctk.CTk):
     def auto_setup_env(self):
         self.toggle_ui_state("disabled")
         self.lbl_status.configure(text="環境建置中...", text_color="#C0392B")
-        self.write_log(">>> [環境] 開始初始化建置程序...")
+        self.write_log(">>> [環境] 開始初始化建置程序(FFmpeg檢查) 請稍後...")
 
-        def download_task():
-            base_path = self.get_base_path()
-            ytdlp_path = os.path.join(base_path, "yt-dlp.exe")
-            ffmpeg_zip = os.path.join(base_path, "ffmpeg-master-latest-win64-gpl.zip")
-            ffmpeg_dir = os.path.join(base_path, "ffmpeg")
-
+        def setup_task():
             try:
-                if not os.path.exists(ytdlp_path):
-                    self.write_log(">>> [環境] 正在下載 yt-dlp.exe...")
-                    urllib.request.urlretrieve("https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp.exe", ytdlp_path)
-                
-                if not os.path.exists(ffmpeg_dir):
-                    self.write_log(">>> [環境] 正在下載 ffmpeg...")
-                    if not os.path.exists(ffmpeg_zip):
-                        ffmpeg_url = "https://github.com/yt-dlp/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl.zip"
-                        urllib.request.urlretrieve(ffmpeg_url, ffmpeg_zip)
-                    
-                    self.write_log(">>> [環境] 正在執行解壓縮...")
-                    subprocess.run(["tar", "-xf", ffmpeg_zip], cwd=base_path, shell=True, creationflags=0x08000000)
-                    
-                    extracted_folder = os.path.join(base_path, "ffmpeg-master-latest-win64-gpl")
-                    if os.path.exists(extracted_folder):
-                        if os.path.exists(ffmpeg_dir): shutil.rmtree(ffmpeg_dir)
-                        os.rename(extracted_folder, ffmpeg_dir)
-                    if os.path.exists(ffmpeg_zip): os.remove(ffmpeg_zip)
-                
+                # 改用無歷史紀錄版本的自訂 Downloader
+                self.DL = NoHistoryDownloader() 
                 self.write_log(">>> [系統] 環境建置完成。")
                 self.after(0, lambda: self.lbl_status.configure(text="準備完成", text_color="#F1C40F"))
                 self.after(0, lambda: self.toggle_ui_state("normal"))
             except Exception as e:
                 self.write_log(f">>> [錯誤] 初始化失敗: {e}")
 
-        threading.Thread(target=download_task, daemon=True).start()
+        threading.Thread(target=setup_task, daemon=True).start()
 
     def setup_ui(self):
         ctk.CTkLabel(self, text="YOUTUBE DOWNLOADER", font=ctk.CTkFont(size=38, weight="bold"), text_color="#3498DB").pack(pady=(30, 10))
@@ -143,28 +234,18 @@ class Downloader_tk(ctk.CTk):
         f = filedialog.askdirectory()
         if f: self.output_dir.set(f)
 
-    def clean_temp_files(self):
-        root_path = self.output_dir.get()
-        if not root_path or not os.path.exists(root_path): return
-        temp_patterns = ['*.part', '*.ytdl', '*.temp', '*.webm', '*.m4a', '*.mp4.part']
-        for root, dirs, files in os.walk(root_path):
-            for pattern in temp_patterns:
-                for f in glob.glob(os.path.join(root, pattern)):
-                    try: os.remove(f)
-                    except: pass
-
     def stop_t(self):
-        if self.download_proc:
-            try:
-                p = psutil.Process(self.download_proc.pid)
-                for child in p.children(recursive=True): child.kill()
-                p.kill()
-            except: pass
+        if self.DL and self.downloading:
+            self.DL.is_stop_requested = True
+            
         self.downloading = False
-        self.clean_temp_files()
         self.lbl_status.configure(text="已停止", text_color="#C0392B")
         self.write_log(">>> [系統] 任務已手動中止。")
         self.btn_run.configure(state="normal")
+        
+        save_path = self.output_dir.get().strip()
+        if self.DL and save_path:
+            threading.Thread(target=self.DL.cleanup_temp_files, args=(save_path,), daemon=True).start()
 
     def on_closing(self):
         if self.downloading: self.stop_t()
@@ -175,132 +256,76 @@ class Downloader_tk(ctk.CTk):
         if not path or not url:
             self.lbl_status.configure(text="資訊不全", text_color="#E74C3C")
             return
+            
         self.downloading = True
-        self.total_count = self.current_idx = self.last_logged_idx = self.actual_processed_count = 0 
-        self.is_finished_logged = self.has_error = False
         self.btn_run.configure(state="disabled")
         self.bar.set(0)
-        self.lbl_status.configure(text="分析中...", text_color="#F1C40F")
+        self.lbl_status.configure(text="準備下載...", text_color="#F1C40F")
         self.txt_log.delete("1.0", "end")
         self.write_log(f">>> [系統] 任務啟動 | 儲存至: {path}")
+        
         threading.Thread(target=self.run_process, args=(url, path.replace("\\", "/")), daemon=True).start()
-        self.poll_output()
+
+    def update_ui_progress(self, pct):
+        if not self.downloading: return
+        self.bar.set(pct)
+        self.lbl_status.configure(text=f"{int(pct*100)}%")
 
     def run_process(self, url, path):
         mode = self.mode.get()
-        tpl = f"{path}/%(title)s.%(ext)s"
+        audio_only = mode in ["1", "3"]
+        is_playlist = mode in ["3", "4"]  # 判定是否為播放清單模式[cite: 3]
         
-        base_path = self.get_base_path()
-        ffmpeg_bin_path = os.path.join(base_path, "ffmpeg", "bin")
-        ytdlp_exe_path = os.path.join(base_path, "yt-dlp.exe")
+        logger = YtLogger(self.write_log)
         
-        env = os.environ.copy()
-        env["PYTHONIOENCODING"] = "utf-8"
+        def custom_hook(d):
+            if self.DL.is_stop_requested:
+                raise Exception("USER_STOP")
+                
+            status = d.get('status')
+            if status == 'downloading':
+                total = d.get('total_bytes') or d.get('total_bytes_estimate', 1)
+                downloaded = d.get('downloaded_bytes', 0)
+                if total > 0:
+                    pct = downloaded / total
+                    self.after(0, lambda p=pct: self.update_ui_progress(p))
+                    
+            elif status == 'finished':
+                fname = os.path.basename(d.get('filename', ''))
+                self.after(0, lambda f=fname: self.write_log(f">>> [下載完成] {f}, 正在處理..."))
 
-        # 基本指令
-        cmd = [
-            ytdlp_exe_path, 
-            "--newline", 
-            "--encoding", "utf-8", 
-            "--ignore-errors", 
-            "--no-overwrites", 
-            "--ffmpeg-location", ffmpeg_bin_path,
-            "--embed-thumbnail",    # 寫入縮圖
-            "--embed-metadata"     # 寫入元數據 (標題、歌手等資訊)
-        ]
-        
-        # 播放清單模式判定
-        if mode not in ["3", "4"]:
-            cmd.append("--no-playlist")
-        
-        cmd.extend(["-o", tpl])
-        
-        # 音訊或影片模式設定
-        if mode in ["1", "3"]: 
-            cmd += ["-x", "--audio-format", "mp3"]
-        else: 
-            cmd += ["-f", "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best"]
+        try:
+            self.DL.is_stop_requested = False
+            self.DL.progress_hook = custom_hook
             
-        cmd.append(url)
-
-        self.download_proc = subprocess.Popen(
-            cmd, 
-            stdout=subprocess.PIPE, 
-            stderr=subprocess.STDOUT, 
-            text=True, 
-            encoding='utf-8', 
-            errors='replace', 
-            env=env,
-            creationflags=0x08000000
-        )
-        
-        for line in iter(self.download_proc.stdout.readline, ''):
-            if not self.downloading: break
-            self.msg_queue.append(line.strip())
-        self.msg_queue.append("END_SIGNAL")
-
-    def poll_output(self):
-        is_pl = self.mode.get() in ["3", "4"]
-        while self.msg_queue:
-            line = self.msg_queue.popleft()
-            if "END_SIGNAL" in line:
-                if self.has_error or self.actual_processed_count == 0:
-                    self.lbl_status.configure(text="下載失敗", text_color="#E74C3C")
-                else:
-                    self.bar.set(1)
-                    self.lbl_status.configure(text="下載完成", text_color="#2ECC71")
-                    self.write_log(f">>> [完成] 任務成功處理。")
-                self.btn_run.configure(state="normal")
-                self.downloading = False
-                return
-
-            if "ERROR:" in line:
-                self.has_error = True
-                self.write_log(f">>> [錯誤] {line.split('ERROR: ')[-1]}")
-
-            if "[download] Destination:" in line:
-                fname = os.path.basename(line.split("Destination: ")[-1])
-                self.write_log(f">>> [下載] 開始: {fname}")
-                self.actual_processed_count += 1
+            # 直接呼叫覆寫後的 download()
+            self.DL.download(url, path, audio_only, is_playlist, logger)
             
-            # 修正：加強跳過已存在檔案的偵測
-            if "has already been downloaded" in line:
-                try:
-                    # 擷取檔名：[download] <file_path> has already been downloaded
-                    fn_match = re.search(r"\[download\]\s+(.+?)\s+has already been downloaded", line)
-                    if fn_match:
-                        fname = os.path.basename(fn_match.group(1))
-                        self.write_log(f">>> [跳過] 檔案已存在: {fname}")
-                    else:
-                        self.write_log(">>> [跳過] 偵測到重複檔案。")
-                except:
-                    pass
-                self.actual_processed_count += 1
-
-            if "[ExtractAudio]" in line: self.write_log(">>> [處理] 轉碼 MP3 中...")
-            if "[Merger]" in line: self.write_log(">>> [處理] 合併影音中...")
-
-            is_done_signal = "[ExtractAudio]" in line or "[Merger]" in line or "already been downloaded" in line or "100%" in line
-
-            if is_pl:
-                pl_match = re.search(r"item (\d+) of (\d+)", line, re.IGNORECASE)
-                if pl_match:
-                    self.current_idx, self.total_count = int(pl_match.group(1)), int(pl_match.group(2))
-                    display_done = self.current_idx - (0 if is_done_signal else 1)
-                    if display_done > self.last_logged_idx:
-                        self.write_log(f">>> [進度] 播放清單項目: {display_done} / {self.total_count}")
-                        self.last_logged_idx = display_done
-                    self.lbl_status.configure(text=f"{display_done} / {self.total_count}")
-                    self.bar.set(display_done / self.total_count if self.total_count > 0 else 0)
+            if not self.DL.is_stop_requested:
+                self.after(0, self.finish_success)
+                
+        except Exception as e:
+            if "USER_STOP" in str(e) or self.DL.is_stop_requested:
+                self.after(0, lambda: self.write_log(">>> [系統] 下載已被終止"))
             else:
-                pct_match = re.search(r"(\d+\.\d+)%", line)
-                if pct_match:
-                    p = float(pct_match.group(1))
-                    self.lbl_status.configure(text=f"{int(p)}%")
-                    self.bar.set(p / 100)
+                self.after(0, lambda err=str(e): self.finish_error(err))
+        finally:
+            self.downloading = False
+            self.DL.is_stop_requested = False
 
-        if self.downloading:
-            self.after(50, self.poll_output)
+    def finish_success(self):
+        self.bar.set(1)
+        self.lbl_status.configure(text="全部完成", text_color="#2ECC71")
+        self.write_log(">>> [完成] 所有任務成功處理。")
+        self.btn_run.configure(state="normal")
+
+    def finish_error(self, err_msg):
+        self.lbl_status.configure(text="下載失敗", text_color="#E74C3C")
+        self.write_log(f">>> [錯誤] {err_msg}")
+        self.btn_run.configure(state="normal")
 
 if __name__ == "__main__":
+    import multiprocessing
+    multiprocessing.freeze_support()
+    
     Downloader_tk().mainloop()
